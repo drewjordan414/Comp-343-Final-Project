@@ -94,6 +94,19 @@ public class wclient {
             length = replyDG.getLength();
             srcport = replyDG.getPort();
 
+            // Check for ERROR packet during HANDOFF phase
+            if (proto == THEPROTO && opcode == wumppkt.ERRORop && length >= wumppkt.EHEADERSIZE) {
+                wumppkt.ERROR errorPkt = new wumppkt.ERROR(replybuf);
+                System.err.println("Error received during HANDOFF: Code " + errorPkt.errcode());
+                if (errorPkt.errcode() == wumppkt.ENOFILE) {
+                    System.err.println("Requested file does not exist on the server.");
+                } else {
+                    System.err.println("Other error received: Code " + errorPkt.errcode());
+                }
+                return; // Terminate the client gracefully
+            }
+
+            // Validate HANDOFF packet
             if (proto != THEPROTO || opcode != wumppkt.HANDOFFop || srcport != destport) {
                 System.err.println("Invalid HANDOFF packet");
                 return;
@@ -247,4 +260,3 @@ public class wclient {
 }
 
 // version handels spray and dupdata2 test case
-
