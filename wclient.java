@@ -130,10 +130,24 @@ public class wclient {
 
             // ====== MAIN LOOP ======
             long lastValidPacketTime = System.currentTimeMillis(); // Track time of last valid packet
+            long timeoutThreshold = 2000; // Timeout threshold in milliseconds (2 seconds)
+            int duplicateCount = 0; // Count duplicates to avoid early exit during constant barrage
+            final int maxDuplicateCount = 100; // Allowable duplicate packets before considering no progress
 
             while (!fileTransferComplete) {
                 try {
-                    s.receive(replyDG);
+                    s.setSoTimeout((int) timeoutThreshold); // Set timeout for the socket
+                    s.receive(replyDG); // Wait for the next packet
+                } catch (SocketTimeoutException ste) {
+                    // Timeout occurred, retransmit the last ACK
+                    System.err.println("Timeout occurred. Retransmitting last ACK[" + (expected_block - 1) + "]");
+                    try {
+                        s.send(ackDG); // Retransmit the last ACK
+                    } catch (IOException ioe) {
+                        System.err.println("Retransmission of ACK failed.");
+                        return;
+                    }
+                    continue; // Retry receiving the next packet
                 } catch (IOException ioe) {
                     System.err.println("Receive() failed");
                     return;
@@ -193,8 +207,9 @@ public class wclient {
                         return;
                     }
 
-                    // Update the last valid packet time
+                    // Update the last valid packet time and reset duplicate count
                     lastValidPacketTime = System.currentTimeMillis();
+                    duplicateCount = 0;
 
                     // If this is the last block (size < MAXDATASIZE), mark transfer as complete
                     if (data.size() < wumppkt.MAXDATASIZE) {
@@ -206,12 +221,14 @@ public class wclient {
                     // Increment expected_block for the next packet
                     expected_block++;
                 } else {
-                    // Ignore duplicate or out-of-sequence DATA packets
+                    // Handle duplicate or out-of-sequence DATA packets
                     System.err.println("Ignoring duplicate or out-of-sequence DATA packet with blocknum = " + blocknum);
+                    duplicateCount++;
 
-                    // Check elapsed time to avoid indefinite processing
-                    if (System.currentTimeMillis() - lastValidPacketTime > 10000) { // 10-second threshold
-                        System.err.println("No progress for 10 seconds. Exiting.");
+                    // Check elapsed time and duplicate count
+                    if (System.currentTimeMillis() - lastValidPacketTime > 10000
+                            || duplicateCount > maxDuplicateCount) {
+                        System.err.println("No progress for 10 seconds or excessive duplicates. Exiting.");
                         break;
                     }
                 }
@@ -259,4 +276,4 @@ public class wclient {
     }
 }
 
-// version handels spray and dupdata2 test case
+// version handels spray, losedata2, and  dupdata2 test case
