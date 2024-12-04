@@ -1,13 +1,10 @@
-/*
-    WUMP (specifically HUMP) in Java
- */
 import java.lang.*;
 import java.net.*;
 import java.io.*;
 
 public class wclient {
 
-    static public void main(String args[]) {
+    public static void main(String[] args) {
         int srcport;
         int destport = wumppkt.SERVERPORT;
         String filename = "vanilla";
@@ -16,18 +13,19 @@ public class wclient {
         short THEPROTO = wumppkt.HUMPPROTO;
         wumppkt.setproto(THEPROTO);
 
-        if (args.length > 0) filename = args[0];
-        if (args.length > 1) winsize = Integer.parseInt(args[1]);
-        if (args.length > 2) desthost = args[2];
+        if (args.length > 0)
+            filename = args[0];
+        if (args.length > 1)
+            winsize = Integer.parseInt(args[1]);
+        if (args.length > 2)
+            desthost = args[2];
 
         DatagramSocket s = null;
+        boolean fileTransferComplete = false; // Flag to track transfer status
+
         try {
             s = new DatagramSocket();
-            try {
-                s.setSoTimeout(wumppkt.INITTIMEOUT); // timeout in milliseconds
-            } catch (SocketException se) {
-                System.err.println("Socket exception: timeout not set!");
-            }
+            s.setSoTimeout(wumppkt.INITTIMEOUT); // Set socket timeout
 
             // DNS lookup
             InetAddress dest;
@@ -102,18 +100,11 @@ public class wclient {
             }
 
             // ====== MAIN LOOP ======
-            while (true) {
+            long lastValidPacketTime = System.currentTimeMillis(); // Track time of last valid packet
+
+            while (!fileTransferComplete) {
                 try {
                     s.receive(replyDG);
-                } catch (SocketTimeoutException ste) {
-                    System.err.println("Timeout occurred. Retransmitting last ACK[" + (expected_block - 1) + "]");
-                    try {
-                        s.send(ackDG);
-                    } catch (IOException ioe) {
-                        System.err.println("Retransmission of ACK failed.");
-                        return;
-                    }
-                    continue;
                 } catch (IOException ioe) {
                     System.err.println("Receive() failed");
                     return;
@@ -138,8 +129,7 @@ public class wclient {
                     continue;
                 }
 
-                printInfo(replyDG, data, starttime);
-
+                // Handle invalid packets
                 if (data == null || srcport != newport) {
                     if (srcport != newport) {
                         System.err.println("Packet from incorrect port: " + srcport);
@@ -155,26 +145,80 @@ public class wclient {
                     continue;
                 }
 
-                System.out.write(data.bytes(), 0, data.size() - wumppkt.DHEADERSIZE);
+                // Handle valid DATA packet
+                if (blocknum == expected_block) {
+                    System.err.println("Processing DATA packet with blocknum = " + blocknum);
+                    System.out.write(data.bytes(), 0, data.size() - wumppkt.DHEADERSIZE);
 
-                if (data.size() < wumppkt.MAXDATASIZE) {
-                    System.err.println("End of file reached.");
-                    break;
+                    // Send ACK for the current block
+                    ack = new wumppkt.ACK(blocknum);
+                    ackDG.setData(ack.write());
+                    ackDG.setLength(ack.size());
+                    ackDG.setPort(newport);
+
+                    try {
+                        s.send(ackDG);
+                        System.err.println("Sent ACK for blocknum = " + blocknum);
+                    } catch (IOException ioe) {
+                        System.err.println("Send() failed for ACK[" + blocknum + "]");
+                        return;
+                    }
+
+                    // Update the last valid packet time
+                    lastValidPacketTime = System.currentTimeMillis();
+
+                    // If this is the last block (size < MAXDATASIZE), mark transfer as complete
+                    if (data.size() < wumppkt.MAXDATASIZE) {
+                        System.err.println("End of file reached after blocknum = " + blocknum);
+                        fileTransferComplete = true;
+                        break; // Exit the main loop
+                    }
+
+                    // Increment expected_block for the next packet
+                    expected_block++;
+                } else {
+                    // Ignore duplicate or out-of-sequence DATA packets
+                    System.err.println("Ignoring duplicate or out-of-sequence DATA packet with blocknum = " + blocknum);
+
+                    // Check elapsed time to avoid indefinite processing
+                    if (System.currentTimeMillis() - lastValidPacketTime > 10000) { // 10-second threshold
+                        System.err.println("No progress for 10 seconds. Exiting.");
+                        break;
+                    }
                 }
+            }
 
-                ack = new wumppkt.ACK(expected_block);
-                ackDG.setData(ack.write());
-                ackDG.setLength(ack.size());
-                ackDG.setPort(newport);
+            // ====== DALLYING ======
+            if (fileTransferComplete) {
+                System.err.println("Entering dallying phase to handle duplicate final DATA packets...");
+                long dallyStart = System.currentTimeMillis();
+                boolean duplicatesHandled = false;
 
-                try {
-                    s.send(ackDG);
-                } catch (IOException ioe) {
-                    System.err.println("Send() failed for ACK[" + expected_block + "]");
-                    return;
+                while (System.currentTimeMillis() - dallyStart < 10000) { // 10-second dallying
+                    try {
+                        s.receive(replyDG);
+                        replybuf = replyDG.getData();
+                        srcport = replyDG.getPort();
+                        proto = wumppkt.proto(replybuf);
+                        opcode = wumppkt.opcode(replybuf);
+
+                        if (srcport == newport && proto == THEPROTO && opcode == wumppkt.DATAop) {
+                            System.err.println("Duplicate final DATA received. Resending final ACK.");
+                            s.send(ackDG); // Resend the final ACK
+                            duplicatesHandled = true;
+                        }
+                    } catch (SocketTimeoutException e) {
+                        // Timeout during dallying is fine; just continue waiting
+                        if (!duplicatesHandled) {
+                            System.err.println("No duplicates received. Dallying period ending.");
+                            break;
+                        }
+                    } catch (IOException ioe) {
+                        System.err.println("Receive() failed during dallying");
+                        break;
+                    }
                 }
-
-                expected_block++;
+                System.err.println("Dallying phase complete. Closing connection.");
             }
         } catch (SocketException se) {
             System.err.println("No socket available");
@@ -184,23 +228,6 @@ public class wclient {
             }
         }
     }
-
-    static public void printInfo(DatagramPacket pkt, wumppkt.DATA data, long starttime) {
-        byte[] replybuf = pkt.getData();
-        int proto = wumppkt.proto(replybuf);
-        int opcode = wumppkt.opcode(replybuf);
-        int length = replybuf.length;
-
-        System.err.print("Received packet: len=" + length);
-        System.err.print("; proto=" + proto);
-        System.err.print("; opcode=" + opcode);
-        System.err.print("; src=(" + pkt.getAddress().getHostAddress() + "/" + pkt.getPort() + ")");
-        System.err.print("; time=" + (System.currentTimeMillis() - starttime));
-        System.err.println();
-
-        if (data == null)
-            System.err.println("         Packet does not seem to be a data packet");
-        else
-            System.err.println("         DATA packet blocknum = " + data.blocknum());
-    }
 }
+
+//version handels spray test case
