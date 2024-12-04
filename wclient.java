@@ -62,13 +62,29 @@ public class wclient {
             int proto, opcode, length, blocknum;
 
             // ====== HANDLE HANDOFF AND SEND ACK[0] ======
-            try {
-                s.receive(replyDG);
-            } catch (SocketTimeoutException ste) {
+            // ====== HANDLE HANDOFF AND SEND ACK[0] ======
+            boolean handoffReceived = false;
+            for (int retries = 0; retries < 5; retries++) { // Retry up to 5 times
+                try {
+                    s.receive(replyDG);
+                    handoffReceived = true;
+                    break; // Exit loop on successful receipt
+                } catch (SocketTimeoutException ste) {
+                    System.err.println("Timeout waiting for HANDOFF. Retrying...");
+                    try {
+                        s.send(reqDG); // Resend REQ
+                    } catch (IOException ioe) {
+                        System.err.println("Failed to retransmit REQ.");
+                        return;
+                    }
+                } catch (IOException ioe) {
+                    System.err.println("Receive() failed while waiting for HANDOFF.");
+                    return;
+                }
+            }
+
+            if (!handoffReceived) {
                 System.err.println("Hard timeout waiting for HANDOFF");
-                return;
-            } catch (IOException ioe) {
-                System.err.println("Receive() failed");
                 return;
             }
 
@@ -230,4 +246,5 @@ public class wclient {
     }
 }
 
-//version handels spray test case
+// version handels spray and dupdata2 test case
+
