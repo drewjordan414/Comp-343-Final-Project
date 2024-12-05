@@ -1,7 +1,8 @@
 # **WUMP Client Implementation (HUMP Protocol)**
 
 ## **Project Description**
-This project implements a client for the WUMP protocol, specifically the HUMP (WUMP with Handoff) variant. The program allows for reliable file transfer over UDP using a simplified version of TFTP. The client communicates with a server (`ulam.cs.luc.edu`) and handles various scenarios, including retransmissions, duplicate packets, and errors.
+This project was developed by Drew Jordan as the final project for **COMP 343** at **Loyola University Chicago**. It implements a client for the WUMP protocol, specifically the HUMP (WUMP with Handoff) variant. The program allows for reliable file transfer over UDP using a simplified version of TFTP. The client communicates with a server (`ulam.cs.luc.edu`) and handles various scenarios, including retransmissions, duplicate packets, and errors.
+
 
 ---
 
